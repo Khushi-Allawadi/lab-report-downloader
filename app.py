@@ -67,8 +67,7 @@ with st.sidebar:
 st.subheader("LabConnect Login")
 
 username = st.text_input(
-    "LabConnect Username",
-    type="text"
+    "LabConnect Username"
 )
 
 password = st.text_input(
