@@ -8,15 +8,7 @@ import zipfile
 import shutil
 import os
 import re
-
-
-# ============================================================
-# CONFIG
-# ============================================================
-
-LABCONNECT_URL = "https://lms.mylabconnect.co.uk/lab-connect"
-
-SEARCH_SEL = "input[placeholder*='Search by patient']"
+import time
 
 
 # ============================================================
@@ -31,286 +23,26 @@ st.set_page_config(
 
 
 # ============================================================
-# CUSTOM CSS
+# CONFIGURATION
 # ============================================================
 
-st.markdown(
-    """
-    <style>
+LABCONNECT_URL = "https://lms.mylabconnect.co.uk/lab-connect"
 
-    .main-title {
-        font-size: 32px;
-        font-weight: 700;
-        margin-bottom: 5px;
-    }
+SEARCH_SEL = "input[placeholder*='Search by patient']"
 
-    .subtitle {
-        color: #666;
-        margin-bottom: 25px;
-    }
 
-    .success-box {
-        padding: 15px;
-        border-radius: 10px;
-        background-color: #e9f7ef;
-        border: 1px solid #b7e4c7;
-    }
+# ============================================================
+# PAGE TITLE
+# ============================================================
 
-    .error-box {
-        padding: 15px;
-        border-radius: 10px;
-        background-color: #fdecec;
-        border: 1px solid #f5b5b5;
-    }
+st.title("📄 Lab Report Downloader")
 
-    </style>
-    """,
-    unsafe_allow_html=True
+st.write(
+    "Upload an Excel file containing case numbers and download "
+    "the Patient & Invoice Reports from LabConnect."
 )
 
-
-# ============================================================
-# HEADER
-# ============================================================
-
-st.markdown(
-    '<div class="main-title">📄 Lab Report Downloader</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitle">'
-    'Upload your Case No. Excel file and download the Patient & Invoice Reports.'
-    '</div>',
-    unsafe_allow_html=True
-)
-
-
-# ============================================================
-# FUNCTIONS
-# ============================================================
-
-def load_cases(excel_path):
-
-    raw = pd.read_excel(
-        excel_path,
-        header=None,
-        dtype=str
-    )
-
-    for r in range(min(15, len(raw))):
-
-        for c in range(raw.shape[1]):
-
-            cell = (
-                str(raw.iat[r, c])
-                .strip()
-                .lower()
-                .replace(" ", "")
-            )
-
-            if cell in ("caseno.", "caseno", "caseno:"):
-
-                vals = (
-                    raw.iloc[r + 1:, c]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                )
-
-                return list(
-                    dict.fromkeys(
-                        v for v in vals
-                        if v and v.lower() != "nan"
-                    )
-                )
-
-    raise ValueError(
-        "Could not find a 'Case No.' column in the first rows of the Excel file."
-    )
-
-
-def safe_filename(value):
-
-    return re.sub(
-        r'[<>:"/\\|?*]',
-        "_",
-        str(value)
-    )
-
-
-def do_login(page, username, password):
-
-    page.get_by_placeholder(
-        "Enter your username"
-    ).fill(username)
-
-    page.get_by_placeholder(
-        "Enter your password"
-    ).fill(password)
-
-    page.locator(
-        "button.login-submit-btn"
-    ).click()
-
-    try:
-
-        page.locator(
-            SEARCH_SEL
-        ).wait_for(timeout=45000)
-
-    except Exception:
-
-        raise RuntimeError(
-            "Login failed. Please check your LabConnect username and password."
-        )
-
-
-def open_home(page, username, password):
-
-    page.goto(LABCONNECT_URL)
-
-    page.wait_for_load_state(
-        "domcontentloaded"
-    )
-
-    try:
-
-        page.locator(
-            SEARCH_SEL
-        ).wait_for(timeout=8000)
-
-    except Exception:
-
-        if page.get_by_placeholder(
-            "Enter your username"
-        ).count() > 0:
-
-            do_login(
-                page,
-                username,
-                password
-            )
-
-        else:
-
-            page.locator(
-                SEARCH_SEL
-            ).wait_for(timeout=20000)
-
-
-def process_case(page, case, output_dir):
-
-    step = "search box"
-
-    try:
-
-        # ------------------------------------------------
-        # Search Case
-        # ------------------------------------------------
-
-        box = page.locator(
-            SEARCH_SEL
-        )
-
-        box.click()
-
-        box.fill("")
-
-        box.fill(case)
-
-
-        # ------------------------------------------------
-        # Select Case
-        # ------------------------------------------------
-
-        step = "search result"
-
-        result = page.get_by_text(
-            case,
-            exact=True
-        ).first
-
-        result.wait_for(
-            timeout=15000
-        )
-
-        result.click(
-            force=True
-        )
-
-
-        # ------------------------------------------------
-        # Patient & Invoice Report
-        # ------------------------------------------------
-
-        step = "report button"
-
-        btn = page.locator(
-            "button:has-text('Patient & Invoice Report')"
-        )
-
-        btn.wait_for(
-            timeout=20000
-        )
-
-        btn.scroll_into_view_if_needed()
-
-
-        # ------------------------------------------------
-        # Download
-        # ------------------------------------------------
-
-        step = "download"
-
-        with page.expect_download(
-            timeout=60000
-        ) as dl:
-
-            btn.evaluate(
-                "el => el.click()"
-            )
-
-        download = dl.value
-
-        filename = safe_filename(
-            case
-        ) + ".pdf"
-
-        download.save_as(
-            str(
-                output_dir / filename
-            )
-        )
-
-        return True, ""
-
-    except Exception as e:
-
-        return False, (
-            f"step={step}: "
-            f"{str(e).splitlines()[0][:200]}"
-        )
-
-
-def create_zip(folder):
-
-    zip_path = folder.parent / "Lab_Reports.zip"
-
-    with zipfile.ZipFile(
-        zip_path,
-        "w",
-        zipfile.ZIP_DEFLATED
-    ) as zip_file:
-
-        for file in folder.glob("*.pdf"):
-
-            zip_file.write(
-                file,
-                arcname=file.name
-            )
-
-    return zip_path
+st.divider()
 
 
 # ============================================================
@@ -318,32 +50,25 @@ def create_zip(folder):
 # ============================================================
 
 with st.sidebar:
-
     st.header("Settings")
 
     st.info(
-        "Your LabConnect credentials are used only for this session "
-        "and are not saved by this app."
+        "The application uses Chromium on the server so it can "
+        "run from Streamlit Cloud."
     )
 
-    browser_type = st.selectbox(
-        "Browser",
-        [
-            "Chromium",
-            "Chrome",
-            "Edge"
-        ]
-    )
+    browser_type = "Chromium"
 
 
 # ============================================================
-# LOGIN
+# LOGIN DETAILS
 # ============================================================
 
-st.subheader("1. LabConnect Login")
+st.subheader("LabConnect Login")
 
 username = st.text_input(
-    "LabConnect Username"
+    "LabConnect Username",
+    type="text"
 )
 
 password = st.text_input(
@@ -353,33 +78,407 @@ password = st.text_input(
 
 
 # ============================================================
-# EXCEL
+# EXCEL UPLOAD
 # ============================================================
 
-st.subheader("2. Upload Case Excel")
+st.subheader("Upload Case List")
 
 uploaded_file = st.file_uploader(
-    "Upload Excel file containing Case No.",
+    "Upload Excel file",
     type=["xlsx", "xls"]
 )
 
 
 # ============================================================
-# START
+# LOAD CASE NUMBERS
 # ============================================================
 
-start = st.button(
+def load_cases(file_path):
+    """
+    Read case numbers from the uploaded Excel file.
+    Attempts to identify the Case Number column automatically.
+    """
+
+    try:
+        df = pd.read_excel(file_path)
+
+    except Exception as e:
+        raise Exception(f"Could not read Excel file: {e}")
+
+    if df.empty:
+        raise Exception("The Excel file is empty.")
+
+    # Possible column names
+    possible_columns = [
+        "Case Number",
+        "Case No",
+        "Case",
+        "CaseNumber",
+        "Case_Number",
+        "Case number",
+        "CASE NUMBER",
+        "CASE NO",
+        "CASE"
+    ]
+
+    case_column = None
+
+    for col in possible_columns:
+        if col in df.columns:
+            case_column = col
+            break
+
+    # If exact match wasn't found, look for columns
+    # containing the word "case"
+    if case_column is None:
+
+        for col in df.columns:
+            if "case" in str(col).lower():
+                case_column = col
+                break
+
+    if case_column is None:
+        raise Exception(
+            "Could not find a Case Number column in the Excel file. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    cases = (
+        df[case_column]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+
+    # Remove Excel-style .0 from numeric case numbers
+    cases = cases.str.replace(
+        r"\.0$",
+        "",
+        regex=True
+    )
+
+    # Remove blank values
+    cases = cases[cases != ""]
+
+    cases = cases.tolist()
+
+    if not cases:
+        raise Exception(
+            "No case numbers were found in the Excel file."
+        )
+
+    return cases
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+def do_login(page, username, password):
+
+    page.goto(
+        LABCONNECT_URL,
+        wait_until="domcontentloaded",
+        timeout=120000
+    )
+
+    page.wait_for_timeout(3000)
+
+    # Username
+    username_selectors = [
+        "input[type='email']",
+        "input[name='username']",
+        "input[name='email']",
+        "input[placeholder*='Username']",
+        "input[placeholder*='username']",
+        "input[placeholder*='Email']",
+        "input[placeholder*='email']"
+    ]
+
+    username_box = None
+
+    for selector in username_selectors:
+
+        try:
+            locator = page.locator(selector)
+
+            if locator.count() > 0:
+                username_box = locator.first
+                break
+
+        except Exception:
+            pass
+
+    if username_box is None:
+        raise Exception(
+            "Could not find the LabConnect username field."
+        )
+
+    username_box.fill(username)
+
+    # Password
+    password_selectors = [
+        "input[type='password']",
+        "input[name='password']",
+        "input[placeholder*='Password']",
+        "input[placeholder*='password']"
+    ]
+
+    password_box = None
+
+    for selector in password_selectors:
+
+        try:
+            locator = page.locator(selector)
+
+            if locator.count() > 0:
+                password_box = locator.first
+                break
+
+        except Exception:
+            pass
+
+    if password_box is None:
+        raise Exception(
+            "Could not find the LabConnect password field."
+        )
+
+    password_box.fill(password)
+
+    # Login button
+    login_selectors = [
+        "button[type='submit']",
+        "input[type='submit']",
+        "button:has-text('Login')",
+        "button:has-text('Log in')",
+        "button:has-text('Sign in')",
+        "text=Login",
+        "text=Log in",
+        "text=Sign in"
+    ]
+
+    login_button = None
+
+    for selector in login_selectors:
+
+        try:
+            locator = page.locator(selector)
+
+            if locator.count() > 0:
+                login_button = locator.first
+                break
+
+        except Exception:
+            pass
+
+    if login_button is None:
+        raise Exception(
+            "Could not find the LabConnect login button."
+        )
+
+    login_button.click()
+
+    page.wait_for_timeout(5000)
+
+
+# ============================================================
+# OPEN HOME PAGE
+# ============================================================
+
+def open_home(page):
+
+    try:
+        page.wait_for_load_state(
+            "domcontentloaded",
+            timeout=60000
+        )
+    except Exception:
+        pass
+
+    page.wait_for_timeout(3000)
+
+
+# ============================================================
+# PROCESS ONE CASE
+# ============================================================
+
+def process_case(page, case_number, output_folder):
+
+    try:
+
+        # ----------------------------------------------------
+        # Search box
+        # ----------------------------------------------------
+
+        search_box = page.locator(SEARCH_SEL)
+
+        search_box.wait_for(
+            state="visible",
+            timeout=30000
+        )
+
+        search_box.fill(str(case_number))
+
+        page.wait_for_timeout(2000)
+
+        # ----------------------------------------------------
+        # Search
+        # ----------------------------------------------------
+
+        # Try pressing Enter first
+        search_box.press("Enter")
+
+        page.wait_for_timeout(3000)
+
+        # ----------------------------------------------------
+        # Look for case/result
+        # ----------------------------------------------------
+
+        possible_case_selectors = [
+            f"text={case_number}",
+            f"td:has-text('{case_number}')",
+            f"div:has-text('{case_number}')",
+            f"a:has-text('{case_number}')"
+        ]
+
+        case_found = False
+
+        for selector in possible_case_selectors:
+
+            try:
+
+                locator = page.locator(selector)
+
+                if locator.count() > 0:
+
+                    locator.first.click()
+
+                    case_found = True
+
+                    break
+
+            except Exception:
+                pass
+
+        if not case_found:
+
+            # Sometimes search automatically opens
+            # the case, so don't immediately fail.
+            page.wait_for_timeout(2000)
+
+        # ----------------------------------------------------
+        # Patient & Invoice Report
+        # ----------------------------------------------------
+
+        report_selectors = [
+            "text=Patient & Invoice Report",
+            "text=Patient and Invoice Report",
+            "text=Patient & Invoice",
+            "button:has-text('Patient & Invoice Report')",
+            "a:has-text('Patient & Invoice Report')"
+        ]
+
+        report_button = None
+
+        for selector in report_selectors:
+
+            try:
+
+                locator = page.locator(selector)
+
+                if locator.count() > 0:
+
+                    report_button = locator.first
+
+                    break
+
+            except Exception:
+                pass
+
+        if report_button is None:
+
+            raise Exception(
+                "Patient & Invoice Report button was not found."
+            )
+
+        # ----------------------------------------------------
+        # Download PDF
+        # ----------------------------------------------------
+
+        with page.expect_download(
+            timeout=60000
+        ) as download_info:
+
+            report_button.click()
+
+        download = download_info.value
+
+        # ----------------------------------------------------
+        # Save PDF
+        # ----------------------------------------------------
+
+        safe_case_number = re.sub(
+            r"[^A-Za-z0-9_\-]",
+            "_",
+            str(case_number)
+        )
+
+        filename = (
+            f"{safe_case_number}_Patient_Invoice_Report.pdf"
+        )
+
+        save_path = Path(output_folder) / filename
+
+        download.save_as(str(save_path))
+
+        return True, f"Downloaded {filename}"
+
+    except Exception as e:
+
+        return False, str(e)
+
+
+# ============================================================
+# CREATE ZIP
+# ============================================================
+
+def create_zip(folder):
+
+    folder = Path(folder)
+
+    zip_path = folder.parent / "Lab_Reports.zip"
+
+    with zipfile.ZipFile(
+        zip_path,
+        "w",
+        zipfile.ZIP_DEFLATED
+    ) as zip_file:
+
+        for file in folder.iterdir():
+
+            if file.is_file():
+
+                zip_file.write(
+                    file,
+                    arcname=file.name
+                )
+
+    return zip_path
+
+
+# ============================================================
+# MAIN BUTTON
+# ============================================================
+
+if st.button(
     "🚀 Start Download",
     type="primary",
     use_container_width=True
-)
+):
 
-
-# ============================================================
-# MAIN PROCESS
-# ============================================================
-
-if start:
+    # --------------------------------------------------------
+    # Validate username
+    # --------------------------------------------------------
 
     if not username:
 
@@ -389,6 +488,9 @@ if start:
 
         st.stop()
 
+    # --------------------------------------------------------
+    # Validate password
+    # --------------------------------------------------------
 
     if not password:
 
@@ -398,416 +500,341 @@ if start:
 
         st.stop()
 
+    # --------------------------------------------------------
+    # Validate Excel
+    # --------------------------------------------------------
 
     if uploaded_file is None:
 
         st.error(
-            "Please upload the Excel file."
+            "Please upload an Excel file."
         )
 
         st.stop()
 
-
     # --------------------------------------------------------
-    # Temporary working directory
+    # Create temporary directory
     # --------------------------------------------------------
 
-    work_dir = Path(
+    temp_dir = Path(
         tempfile.mkdtemp(
             prefix="lab_reports_"
         )
     )
 
-    excel_path = (
-        work_dir /
-        uploaded_file.name
-    )
+    excel_path = temp_dir / uploaded_file.name
 
-    output_dir = (
-        work_dir /
-        "Reports"
-    )
+    output_folder = temp_dir / "Reports"
 
-    output_dir.mkdir(
+    output_folder.mkdir(
+        parents=True,
         exist_ok=True
     )
 
-
-    # --------------------------------------------------------
-    # Save uploaded Excel
-    # --------------------------------------------------------
-
-    with open(
-        excel_path,
-        "wb"
-    ) as f:
-
-        f.write(
-            uploaded_file.getbuffer()
-        )
-
-
-    # --------------------------------------------------------
-    # Read cases
-    # --------------------------------------------------------
-
     try:
+
+        # ----------------------------------------------------
+        # Save uploaded Excel
+        # ----------------------------------------------------
+
+        with open(
+            excel_path,
+            "wb"
+        ) as f:
+
+            f.write(
+                uploaded_file.getbuffer()
+            )
+
+        # ----------------------------------------------------
+        # Read cases
+        # ----------------------------------------------------
+
+        st.info(
+            "Reading case numbers from Excel..."
+        )
 
         cases = load_cases(
             excel_path
         )
 
-    except Exception as e:
-
-        st.error(
-            f"Could not read Excel: {e}"
+        st.success(
+            f"Found {len(cases)} case(s)."
         )
 
-        shutil.rmtree(
-            work_dir,
-            ignore_errors=True
+        # ----------------------------------------------------
+        # Progress UI
+        # ----------------------------------------------------
+
+        progress_bar = st.progress(0)
+
+        status_text = st.empty()
+
+        results_container = st.empty()
+
+        successful = []
+        failed = []
+
+        # ----------------------------------------------------
+        # Start Playwright
+        # ----------------------------------------------------
+
+        status_text.info(
+            "Starting Chromium browser..."
         )
-
-        st.stop()
-
-
-    if not cases:
-
-        st.error(
-            "No Case No. values were found."
-        )
-
-        shutil.rmtree(
-            work_dir,
-            ignore_errors=True
-        )
-
-        st.stop()
-
-
-    st.success(
-        f"Found {len(cases)} cases."
-    )
-
-
-    # --------------------------------------------------------
-    # Progress
-    # --------------------------------------------------------
-
-    progress = st.progress(
-        0
-    )
-
-    status_text = st.empty()
-
-    log_area = st.empty()
-
-    successful = []
-
-    failed = []
-
-
-    # --------------------------------------------------------
-    # Playwright
-    # --------------------------------------------------------
-
-    try:
 
         with sync_playwright() as p:
 
-            # Browser selection
+            # =================================================
+            # IMPORTANT:
+            # Streamlit Cloud uses the Linux Chromium package
+            # installed through packages.txt.
+            # =================================================
 
-            if browser_type == "Chrome":
+            chromium_path = shutil.which(
+                "chromium"
+            )
 
-                browser = p.chromium.launch(
-                    headless=True,
-                    channel="chrome"
+            if not chromium_path:
+
+                # Try chromium-browser as fallback
+                chromium_path = shutil.which(
+                    "chromium-browser"
                 )
 
-            elif browser_type == "Edge":
+            if not chromium_path:
 
-                browser = p.chromium.launch(
-                    headless=True,
-                    channel="msedge"
+                raise RuntimeError(
+                    "Chromium was not found on the Streamlit "
+                    "server. Make sure packages.txt contains "
+                    "the line: chromium"
                 )
 
-            else:
+            status_text.info(
+                f"Using Chromium: {chromium_path}"
+            )
 
-                browser = p.chromium.launch(
-                    headless=True
-                )
+            browser = p.chromium.launch(
+                headless=True,
+                executable_path=chromium_path,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-first-run",
+                    "--no-zygote",
+                    "--disable-setuid-sandbox"
+                ]
+            )
 
+            # ------------------------------------------------
+            # Browser context
+            # ------------------------------------------------
 
             context = browser.new_context(
-                accept_downloads=True
+                accept_downloads=True,
+                viewport={
+                    "width": 1440,
+                    "height": 900
+                }
             )
 
             page = context.new_page()
-
-            page.set_default_timeout(
-                20000
-            )
-
 
             # ------------------------------------------------
             # Login
             # ------------------------------------------------
 
             status_text.info(
-                "Logging into LabConnect..."
+                "Opening LabConnect and logging in..."
             )
 
-            open_home(
+            do_login(
                 page,
                 username,
                 password
             )
 
+            open_home(page)
 
             status_text.success(
                 "Logged into LabConnect."
             )
 
-
             # ------------------------------------------------
             # Process cases
             # ------------------------------------------------
 
-            for i, case in enumerate(
-                cases,
-                start=1
-            ):
+            for index, case_number in enumerate(cases):
+
+                current_number = index + 1
 
                 status_text.info(
-                    f"Processing {i}/{len(cases)}: {case}"
+                    f"Processing case "
+                    f"{current_number}/{len(cases)}: "
+                    f"{case_number}"
                 )
 
-                success = False
-                detail = ""
-
-
-                # Retry once
-
-                for attempt in range(2):
-
-                    try:
-
-                        success, detail = process_case(
-                            page,
-                            case,
-                            output_dir
-                        )
-
-                        if success:
-
-                            break
-
-                        open_home(
-                            page,
-                            username,
-                            password
-                        )
-
-                    except Exception as e:
-
-                        detail = str(e)
-
-                        try:
-
-                            open_home(
-                                page,
-                                username,
-                                password
-                            )
-
-                        except Exception:
-
-                            pass
-
-
-                # --------------------------------------------
-                # Record result
-                # --------------------------------------------
+                success, message = process_case(
+                    page,
+                    case_number,
+                    output_folder
+                )
 
                 if success:
 
                     successful.append(
-                        case
-                    )
-
-                    log_message = (
-                        f"✅ {case} - Downloaded"
+                        case_number
                     )
 
                 else:
 
                     failed.append(
-                        {
-                            "case": case,
-                            "error": detail
-                        }
+                        (
+                            case_number,
+                            message
+                        )
                     )
 
-                    log_message = (
-                        f"❌ {case} - {detail}"
-                    )
-
-
-                # --------------------------------------------
-                # Update UI
-                # --------------------------------------------
-
-                current_progress = (
-                    i / len(cases)
+                # Progress
+                progress = (
+                    current_number /
+                    len(cases)
                 )
 
-                progress.progress(
-                    current_progress
+                progress_bar.progress(
+                    progress
                 )
 
-                log_area.write(
-                    log_message
-                )
+            # ------------------------------------------------
+            # Close browser
+            # ------------------------------------------------
 
-
+            context.close()
             browser.close()
 
+        # ====================================================
+        # CREATE ZIP
+        # ====================================================
 
-    except Exception as e:
-
-        st.error(
-            f"Automation error: {e}"
+        status_text.info(
+            "Creating ZIP file..."
         )
-
-        shutil.rmtree(
-            work_dir,
-            ignore_errors=True
-        )
-
-        st.stop()
-
-
-    # ========================================================
-    # RESULTS
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "Results"
-    )
-
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.metric(
-            "Downloaded",
-            len(successful)
-        )
-
-    with col2:
-
-        st.metric(
-            "Failed",
-            len(failed)
-        )
-
-
-    # --------------------------------------------------------
-    # Failed cases
-    # --------------------------------------------------------
-
-    if failed:
-
-        st.warning(
-            "Some cases could not be downloaded."
-        )
-
-        failed_df = pd.DataFrame(
-            failed
-        )
-
-        st.dataframe(
-            failed_df,
-            use_container_width=True
-        )
-
-
-    # --------------------------------------------------------
-    # ZIP
-    # --------------------------------------------------------
-
-    pdf_files = list(
-        output_dir.glob("*.pdf")
-    )
-
-
-    if pdf_files:
 
         zip_path = create_zip(
-            output_dir
+            output_folder
         )
 
-        st.success(
-            f"{len(pdf_files)} PDF reports are ready."
-        )
-
-
+        # Read ZIP into memory
         with open(
             zip_path,
             "rb"
         ) as f:
 
-            st.download_button(
-                label="📦 Download All Reports (ZIP)",
-                data=f.read(),
-                file_name="Lab_Reports.zip",
-                mime="application/zip",
-                use_container_width=True
+            zip_bytes = f.read()
+
+        # ====================================================
+        # RESULTS
+        # ====================================================
+
+        st.divider()
+
+        st.subheader(
+            "Download Complete"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.metric(
+                "Successful",
+                len(successful)
             )
 
+        with col2:
 
-        # Individual PDFs
+            st.metric(
+                "Failed",
+                len(failed)
+            )
 
-        with st.expander(
-            "Download individual reports"
-        ):
+        # ----------------------------------------------------
+        # Download button
+        # ----------------------------------------------------
 
-            for pdf in pdf_files:
+        st.download_button(
+            label="⬇️ Download All Reports (ZIP)",
+            data=zip_bytes,
+            file_name=(
+                "Lab_Reports_"
+                + datetime.now().strftime(
+                    "%Y%m%d_%H%M%S"
+                )
+                + ".zip"
+            ),
+            mime="application/zip",
+            use_container_width=True
+        )
 
-                with open(
-                    pdf,
-                    "rb"
-                ) as f:
+        # ====================================================
+        # FAILED CASES
+        # ====================================================
 
-                    st.download_button(
-                        label=f"📄 {pdf.name}",
-                        data=f.read(),
-                        file_name=pdf.name,
-                        mime="application/pdf"
+        if failed:
+
+            st.warning(
+                f"{len(failed)} case(s) could not be downloaded."
+            )
+
+            with st.expander(
+                "View Failed Cases"
+            ):
+
+                for case_number, error in failed:
+
+                    st.write(
+                        f"**{case_number}** — {error}"
                     )
 
+        # ====================================================
+        # SUCCESSFUL CASES
+        # ====================================================
 
-    else:
+        if successful:
+
+            with st.expander(
+                "View Successful Cases"
+            ):
+
+                for case_number in successful:
+
+                    st.write(
+                        f"✅ {case_number}"
+                    )
+
+    except Exception as e:
 
         st.error(
-            "No reports were downloaded."
+            "Automation error:"
         )
 
-
-    # --------------------------------------------------------
-    # Cleanup
-    # --------------------------------------------------------
-
-    try:
-
-        shutil.rmtree(
-            work_dir,
-            ignore_errors=True
+        st.code(
+            str(e)
         )
 
-    except Exception:
+    finally:
 
-        pass
+        # ----------------------------------------------------
+        # Cleanup temporary files
+        # ----------------------------------------------------
+
+        try:
+
+            shutil.rmtree(
+                temp_dir,
+                ignore_errors=True
+            )
+
+        except Exception:
+            pass
