@@ -584,7 +584,6 @@ def download_report(
 
     filename = (
         f"{safe_case_number}"
-        f"_Patient_Invoice_Report.pdf"
     )
 
     save_path = (
