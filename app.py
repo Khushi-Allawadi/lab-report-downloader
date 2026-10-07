@@ -85,30 +85,61 @@ uploaded_file = st.file_uploader(
 
 
 # ============================================================
-# LOAD CASES FROM EXCEL
+# NORMALIZE TEXT
+# ============================================================
+
+def normalize_text(value):
+
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip().lower()
+
+    # Remove punctuation
+    text = re.sub(
+        r"[^a-z0-9\s]",
+        "",
+        text
+    )
+
+    # Remove extra spaces
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+    return text
+
+
+# ============================================================
+# LOAD CASE NUMBERS
 # ============================================================
 
 def load_cases(file_path):
 
     """
-    Reads the Case No. column from the Excel file.
+    Reads the Excel file without assuming that the first row
+    contains the headers.
 
-    Supports:
-    Case No.
-    Case No
-    Case Number
-    CaseNumber
-    Case_Number
+    It searches the entire sheet for:
+
+        Case No.
+        Case No
+        Case Number
+        CaseNumber
+        Case ID
+
+    Then it reads the values underneath that column.
     """
 
     try:
 
-        # ----------------------------------------------------
-        # Read Excel
-        # ----------------------------------------------------
-
+        # IMPORTANT:
+        # header=None means we DON'T assume row 1 is the header.
         df = pd.read_excel(
-            file_path
+            file_path,
+            header=None
         )
 
     except Exception as e:
@@ -118,7 +149,7 @@ def load_cases(file_path):
         )
 
     # --------------------------------------------------------
-    # Check empty file
+    # Empty file
     # --------------------------------------------------------
 
     if df.empty:
@@ -128,114 +159,103 @@ def load_cases(file_path):
         )
 
     # --------------------------------------------------------
-    # Keep original column names for debugging
+    # Find Case No. anywhere in the sheet
     # --------------------------------------------------------
 
-    original_columns = list(df.columns)
+    case_row = None
+    case_col = None
 
-    # --------------------------------------------------------
-    # Normalize column names
-    #
-    # Example:
-    # "Case No." -> "case no"
-    # " Case No. " -> "case no"
-    # "CASE NO." -> "case no"
-    # --------------------------------------------------------
+    for row_index in range(
+        len(df)
+    ):
 
-    normalized_columns = {}
+        for col_index in range(
+            len(df.columns)
+        ):
 
-    for column in df.columns:
+            value = df.iloc[
+                row_index,
+                col_index
+            ]
 
-        normalized = str(column).strip().lower()
+            normalized = normalize_text(
+                value
+            )
 
-        normalized = normalized.replace(".", "")
+            if normalized in [
+                "case no",
+                "case number",
+                "caseno",
+                "case id",
+                "caseid"
+            ]:
 
-        normalized = normalized.replace("_", " ")
-
-        normalized = re.sub(
-            r"\s+",
-            " ",
-            normalized
-        ).strip()
-
-        normalized_columns[column] = normalized
-
-    # --------------------------------------------------------
-    # Possible Case No. column names
-    # --------------------------------------------------------
-
-    possible_names = [
-        "case no",
-        "case number",
-        "caseno",
-        "case",
-        "case id",
-        "caseid"
-    ]
-
-    case_column = None
-
-    # --------------------------------------------------------
-    # Look for exact normalized match
-    # --------------------------------------------------------
-
-    for original_column, normalized_column in normalized_columns.items():
-
-        if normalized_column in possible_names:
-
-            case_column = original_column
-
-            break
-
-    # --------------------------------------------------------
-    # Fallback:
-    # Find any column containing "case"
-    # --------------------------------------------------------
-
-    if case_column is None:
-
-        for original_column, normalized_column in normalized_columns.items():
-
-            if "case" in normalized_column:
-
-                case_column = original_column
+                case_row = row_index
+                case_col = col_index
 
                 break
 
+        if case_col is not None:
+            break
+
     # --------------------------------------------------------
-    # If still not found
+    # Case No. wasn't found
     # --------------------------------------------------------
 
-    if case_column is None:
+    if case_col is None:
+
+        # Create a useful preview for debugging
+        preview = df.head(
+            20
+        ).to_string(
+            index=False,
+            header=False
+        )
 
         raise Exception(
-            "Could not find the Case No. column.\n\n"
-            f"Available columns: {original_columns}"
+            "Could not find 'Case No.' anywhere in the "
+            "Excel sheet.\n\n"
+            "First 20 rows detected:\n\n"
+            + preview
         )
 
     # --------------------------------------------------------
-    # Extract Case Numbers
+    # Get everything BELOW Case No.
     # --------------------------------------------------------
 
-    cases = df[case_column]
+    case_values = df.iloc[
+        case_row + 1:,
+        case_col
+    ]
 
-    # Remove blank rows
-    cases = cases.dropna()
+    # --------------------------------------------------------
+    # Remove empty cells
+    # --------------------------------------------------------
 
+    case_values = case_values.dropna()
+
+    # --------------------------------------------------------
     # Convert to string
-    cases = cases.astype(str)
+    # --------------------------------------------------------
 
-    # Remove spaces around values
-    cases = cases.str.strip()
+    case_values = case_values.astype(
+        str
+    )
 
     # --------------------------------------------------------
-    # Remove Excel numeric .0
+    # Remove spaces
+    # --------------------------------------------------------
+
+    case_values = case_values.str.strip()
+
+    # --------------------------------------------------------
+    # Remove Excel .0
     #
     # Example:
     # 123456.0 -> 123456
     # --------------------------------------------------------
 
-    cases = cases.str.replace(
+    case_values = case_values.str.replace(
         r"\.0$",
         "",
         regex=True
@@ -245,15 +265,41 @@ def load_cases(file_path):
     # Remove blank values
     # --------------------------------------------------------
 
-    cases = cases[
-        cases != ""
+    case_values = case_values[
+        case_values != ""
+    ]
+
+    # --------------------------------------------------------
+    # Remove repeated header if present
+    # --------------------------------------------------------
+
+    case_values = case_values[
+        ~case_values.apply(
+            normalize_text
+        ).isin([
+            "case no",
+            "case number",
+            "caseno",
+            "case id",
+            "caseid"
+        ])
     ]
 
     # --------------------------------------------------------
     # Convert to list
     # --------------------------------------------------------
 
-    cases = cases.tolist()
+    cases = case_values.tolist()
+
+    # --------------------------------------------------------
+    # Remove duplicate case numbers
+    # --------------------------------------------------------
+
+    cases = list(
+        dict.fromkeys(
+            cases
+        )
+    )
 
     # --------------------------------------------------------
     # Validate
@@ -262,8 +308,8 @@ def load_cases(file_path):
     if not cases:
 
         raise Exception(
-            "The Case No. column was found, "
-            "but it contains no case numbers."
+            "The 'Case No.' column was found, "
+            "but there are no case numbers underneath it."
         )
 
     return cases
@@ -457,12 +503,11 @@ def do_login(
         )
 
     # --------------------------------------------------------
-    # Click login
+    # Login
     # --------------------------------------------------------
 
     login_button.click()
 
-    # Give LabConnect time to load
     page.wait_for_timeout(
         7000
     )
@@ -477,10 +522,6 @@ def search_case(
     case_number
 ):
 
-    # --------------------------------------------------------
-    # Find search box
-    # --------------------------------------------------------
-
     search_box = page.locator(
         SEARCH_SEL
     )
@@ -490,16 +531,12 @@ def search_case(
         timeout=30000
     )
 
-    # --------------------------------------------------------
-    # Clear previous search
-    # --------------------------------------------------------
+    # Clear old search
+    search_box.fill(
+        ""
+    )
 
-    search_box.fill("")
-
-    # --------------------------------------------------------
     # Enter case number
-    # --------------------------------------------------------
-
     search_box.fill(
         str(case_number)
     )
@@ -508,10 +545,7 @@ def search_case(
         1500
     )
 
-    # --------------------------------------------------------
     # Search
-    # --------------------------------------------------------
-
     search_box.press(
         "Enter"
     )
@@ -549,9 +583,7 @@ def open_case(
                 selector
             )
 
-            count = locator.count()
-
-            if count > 0:
+            if locator.count() > 0:
 
                 locator.first.click()
 
@@ -593,10 +625,6 @@ def download_report(
 
     report_button = None
 
-    # --------------------------------------------------------
-    # Find report button
-    # --------------------------------------------------------
-
     for selector in report_selectors:
 
         try:
@@ -622,7 +650,7 @@ def download_report(
         )
 
     # --------------------------------------------------------
-    # Download
+    # Download PDF
     # --------------------------------------------------------
 
     with page.expect_download(
@@ -653,10 +681,6 @@ def download_report(
         / filename
     )
 
-    # --------------------------------------------------------
-    # Save PDF
-    # --------------------------------------------------------
-
     download.save_as(
         str(save_path)
     )
@@ -665,7 +689,7 @@ def download_report(
 
 
 # ============================================================
-# PROCESS CASE
+# PROCESS ONE CASE
 # ============================================================
 
 def process_case(
@@ -688,16 +712,14 @@ def process_case(
             case_number
         )
 
-        # Download report
+        # Download
         report_path = download_report(
             page,
             case_number,
             output_folder
         )
 
-        return True, str(
-            report_path.name
-        )
+        return True, report_path.name
 
     except Exception as e:
 
@@ -740,7 +762,7 @@ def create_zip(
 
 
 # ============================================================
-# START DOWNLOAD BUTTON
+# START DOWNLOAD
 # ============================================================
 
 if st.button(
@@ -750,7 +772,7 @@ if st.button(
 ):
 
     # ========================================================
-    # VALIDATE INPUT
+    # VALIDATION
     # ========================================================
 
     if not username:
@@ -833,9 +855,12 @@ if st.button(
             f"Found {len(cases)} case(s)."
         )
 
-        # Show first few cases
+        # ----------------------------------------------------
+        # Show cases
+        # ----------------------------------------------------
+
         with st.expander(
-            "View Case Numbers"
+            "📋 View Case Numbers"
         ):
 
             st.write(
@@ -857,7 +882,7 @@ if st.button(
         failed = []
 
         # ====================================================
-        # START PLAYWRIGHT
+        # PLAYWRIGHT
         # ====================================================
 
         status_text.info(
@@ -954,13 +979,13 @@ if st.button(
                 cases
             ):
 
-                case_position = (
+                position = (
                     index + 1
                 )
 
                 status_text.info(
                     f"Processing "
-                    f"{case_position}/{total_cases}: "
+                    f"{position}/{total_cases}: "
                     f"{case_number}"
                 )
 
@@ -985,10 +1010,8 @@ if st.button(
                         )
                     )
 
-                # Progress
                 progress_bar.progress(
-                    case_position
-                    / total_cases
+                    position / total_cases
                 )
 
             # =================================================
@@ -1051,7 +1074,7 @@ if st.button(
             )
 
         # ====================================================
-        # DOWNLOAD ZIP
+        # DOWNLOAD BUTTON
         # ====================================================
 
         st.download_button(
@@ -1113,7 +1136,7 @@ if st.button(
         )
 
     # ========================================================
-    # ERROR HANDLING
+    # ERROR
     # ========================================================
 
     except Exception as e:
