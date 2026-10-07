@@ -44,19 +44,6 @@ st.divider()
 
 
 # ============================================================
-# SIDEBAR
-# ============================================================
-
-with st.sidebar:
-
-    st.header("Settings")
-
-    st.info(
-        "The application uses Chromium on the server."
-    )
-
-
-# ============================================================
 # LOGIN
 # ============================================================
 
@@ -95,14 +82,12 @@ def normalize_text(value):
 
     text = str(value).strip().lower()
 
-    # Remove punctuation
     text = re.sub(
         r"[^a-z0-9\s]",
         "",
         text
     )
 
-    # Remove extra spaces
     text = re.sub(
         r"\s+",
         " ",
@@ -118,25 +103,9 @@ def normalize_text(value):
 
 def load_cases(file_path):
 
-    """
-    Reads the Excel file without assuming that the first row
-    contains the headers.
-
-    It searches the entire sheet for:
-
-        Case No.
-        Case No
-        Case Number
-        CaseNumber
-        Case ID
-
-    Then it reads the values underneath that column.
-    """
-
     try:
 
-        # IMPORTANT:
-        # header=None means we DON'T assume row 1 is the header.
+        # Read without assuming first row is header
         df = pd.read_excel(
             file_path,
             header=None
@@ -148,10 +117,6 @@ def load_cases(file_path):
             f"Could not read Excel file: {e}"
         )
 
-    # --------------------------------------------------------
-    # Empty file
-    # --------------------------------------------------------
-
     if df.empty:
 
         raise Exception(
@@ -159,7 +124,7 @@ def load_cases(file_path):
         )
 
     # --------------------------------------------------------
-    # Find Case No. anywhere in the sheet
+    # Find Case No. anywhere in sheet
     # --------------------------------------------------------
 
     case_row = None
@@ -199,12 +164,11 @@ def load_cases(file_path):
             break
 
     # --------------------------------------------------------
-    # Case No. wasn't found
+    # Not found
     # --------------------------------------------------------
 
     if case_col is None:
 
-        # Create a useful preview for debugging
         preview = df.head(
             20
         ).to_string(
@@ -213,14 +177,14 @@ def load_cases(file_path):
         )
 
         raise Exception(
-            "Could not find 'Case No.' anywhere in the "
-            "Excel sheet.\n\n"
+            "Could not find 'Case No.' anywhere in "
+            "the Excel sheet.\n\n"
             "First 20 rows detected:\n\n"
             + preview
         )
 
     # --------------------------------------------------------
-    # Get everything BELOW Case No.
+    # Values underneath Case No.
     # --------------------------------------------------------
 
     case_values = df.iloc[
@@ -228,51 +192,26 @@ def load_cases(file_path):
         case_col
     ]
 
-    # --------------------------------------------------------
-    # Remove empty cells
-    # --------------------------------------------------------
-
     case_values = case_values.dropna()
-
-    # --------------------------------------------------------
-    # Convert to string
-    # --------------------------------------------------------
 
     case_values = case_values.astype(
         str
     )
 
-    # --------------------------------------------------------
-    # Remove spaces
-    # --------------------------------------------------------
-
     case_values = case_values.str.strip()
 
-    # --------------------------------------------------------
     # Remove Excel .0
-    #
-    # Example:
-    # 123456.0 -> 123456
-    # --------------------------------------------------------
-
     case_values = case_values.str.replace(
         r"\.0$",
         "",
         regex=True
     )
 
-    # --------------------------------------------------------
-    # Remove blank values
-    # --------------------------------------------------------
-
     case_values = case_values[
         case_values != ""
     ]
 
-    # --------------------------------------------------------
-    # Remove repeated header if present
-    # --------------------------------------------------------
-
+    # Remove repeated header
     case_values = case_values[
         ~case_values.apply(
             normalize_text
@@ -285,38 +224,27 @@ def load_cases(file_path):
         ])
     ]
 
-    # --------------------------------------------------------
-    # Convert to list
-    # --------------------------------------------------------
-
     cases = case_values.tolist()
 
-    # --------------------------------------------------------
-    # Remove duplicate case numbers
-    # --------------------------------------------------------
-
+    # Remove duplicates while maintaining order
     cases = list(
         dict.fromkeys(
             cases
         )
     )
 
-    # --------------------------------------------------------
-    # Validate
-    # --------------------------------------------------------
-
     if not cases:
 
         raise Exception(
-            "The 'Case No.' column was found, "
-            "but there are no case numbers underneath it."
+            "The Case No. column was found, "
+            "but no case numbers were found underneath it."
         )
 
     return cases
 
 
 # ============================================================
-# FIND USERNAME FIELD
+# FIND USERNAME
 # ============================================================
 
 def find_username_field(page):
@@ -324,17 +252,11 @@ def find_username_field(page):
     selectors = [
 
         "input[type='email']",
-
         "input[name='username']",
-
         "input[name='email']",
-
         "input[placeholder*='Username']",
-
         "input[placeholder*='username']",
-
         "input[placeholder*='Email']",
-
         "input[placeholder*='email']"
     ]
 
@@ -352,13 +274,13 @@ def find_username_field(page):
 
         except Exception:
 
-            continue
+            pass
 
     return None
 
 
 # ============================================================
-# FIND PASSWORD FIELD
+# FIND PASSWORD
 # ============================================================
 
 def find_password_field(page):
@@ -366,11 +288,8 @@ def find_password_field(page):
     selectors = [
 
         "input[type='password']",
-
         "input[name='password']",
-
         "input[placeholder*='Password']",
-
         "input[placeholder*='password']"
     ]
 
@@ -388,7 +307,7 @@ def find_password_field(page):
 
         except Exception:
 
-            continue
+            pass
 
     return None
 
@@ -402,10 +321,6 @@ def do_login(
     username,
     password
 ):
-
-    # --------------------------------------------------------
-    # Open LabConnect
-    # --------------------------------------------------------
 
     page.goto(
         LABCONNECT_URL,
@@ -460,19 +375,12 @@ def do_login(
     login_selectors = [
 
         "button[type='submit']",
-
         "input[type='submit']",
-
         "button:has-text('Login')",
-
         "button:has-text('Log in')",
-
         "button:has-text('Sign in')",
-
         "input[value='Login']",
-
         "input[value='Log in']",
-
         "input[value='Sign in']"
     ]
 
@@ -494,17 +402,13 @@ def do_login(
 
         except Exception:
 
-            continue
+            pass
 
     if login_button is None:
 
         raise Exception(
             "Could not find the LabConnect login button."
         )
-
-    # --------------------------------------------------------
-    # Login
-    # --------------------------------------------------------
 
     login_button.click()
 
@@ -514,7 +418,7 @@ def do_login(
 
 
 # ============================================================
-# SEARCH FOR CASE
+# SEARCH CASE
 # ============================================================
 
 def search_case(
@@ -531,12 +435,10 @@ def search_case(
         timeout=30000
     )
 
-    # Clear old search
     search_box.fill(
         ""
     )
 
-    # Enter case number
     search_box.fill(
         str(case_number)
     )
@@ -545,7 +447,6 @@ def search_case(
         1500
     )
 
-    # Search
     search_box.press(
         "Enter"
     )
@@ -567,11 +468,8 @@ def open_case(
     selectors = [
 
         f"text={case_number}",
-
         f"td:has-text('{case_number}')",
-
         f"a:has-text('{case_number}')",
-
         f"div:has-text('{case_number}')"
     ]
 
@@ -595,13 +493,13 @@ def open_case(
 
         except Exception:
 
-            continue
+            pass
 
     return False
 
 
 # ============================================================
-# DOWNLOAD PATIENT & INVOICE REPORT
+# DOWNLOAD REPORT
 # ============================================================
 
 def download_report(
@@ -625,6 +523,10 @@ def download_report(
 
     report_button = None
 
+    # --------------------------------------------------------
+    # Find button
+    # --------------------------------------------------------
+
     for selector in report_selectors:
 
         try:
@@ -641,7 +543,7 @@ def download_report(
 
         except Exception:
 
-            continue
+            pass
 
     if report_button is None:
 
@@ -650,19 +552,28 @@ def download_report(
         )
 
     # --------------------------------------------------------
-    # Download PDF
+    # Download
     # --------------------------------------------------------
 
-    with page.expect_download(
-        timeout=60000
-    ) as download_info:
+    try:
 
-        report_button.click()
+        with page.expect_download(
+            timeout=120000
+        ) as download_info:
 
-    download = download_info.value
+            report_button.click()
+
+        download = download_info.value
+
+    except Exception as e:
+
+        raise Exception(
+            f"Report button was found, but the PDF "
+            f"download did not start: {e}"
+        )
 
     # --------------------------------------------------------
-    # Safe filename
+    # Filename
     # --------------------------------------------------------
 
     safe_case_number = re.sub(
@@ -681,15 +592,80 @@ def download_report(
         / filename
     )
 
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
     download.save_as(
         str(save_path)
     )
+
+    # --------------------------------------------------------
+    # VERIFY FILE EXISTS
+    # --------------------------------------------------------
+
+    if not save_path.exists():
+
+        raise Exception(
+            "Download was reported by Playwright, "
+            "but the PDF file was not created."
+        )
+
+    # --------------------------------------------------------
+    # VERIFY FILE SIZE
+    # --------------------------------------------------------
+
+    file_size = save_path.stat().st_size
+
+    if file_size == 0:
+
+        # Delete empty file
+        try:
+            save_path.unlink()
+        except Exception:
+            pass
+
+        raise Exception(
+            "The PDF file was created but is 0 bytes."
+        )
+
+    # --------------------------------------------------------
+    # VERIFY PDF SIGNATURE
+    # --------------------------------------------------------
+
+    try:
+
+        with open(
+            save_path,
+            "rb"
+        ) as pdf_file:
+
+            first_bytes = pdf_file.read(
+                5
+            )
+
+        if first_bytes != b"%PDF-":
+
+            raise Exception(
+                "The downloaded file is not a valid PDF."
+            )
+
+    except Exception as e:
+
+        try:
+            save_path.unlink()
+        except Exception:
+            pass
+
+        raise Exception(
+            str(e)
+        )
 
     return save_path
 
 
 # ============================================================
-# PROCESS ONE CASE
+# PROCESS CASE
 # ============================================================
 
 def process_case(
@@ -700,26 +676,50 @@ def process_case(
 
     try:
 
+        # ----------------------------------------------------
         # Search
+        # ----------------------------------------------------
+
         search_case(
             page,
             case_number
         )
 
+        # ----------------------------------------------------
         # Open case
-        open_case(
+        # ----------------------------------------------------
+
+        case_opened = open_case(
             page,
             case_number
         )
 
+        if not case_opened:
+
+            raise Exception(
+                f"Could not open case {case_number}."
+            )
+
+        # ----------------------------------------------------
         # Download
+        # ----------------------------------------------------
+
         report_path = download_report(
             page,
             case_number,
             output_folder
         )
 
-        return True, report_path.name
+        # ----------------------------------------------------
+        # Final verification
+        # ----------------------------------------------------
+
+        file_size = report_path.stat().st_size
+
+        return True, (
+            report_path.name,
+            file_size
+        )
 
     except Exception as e:
 
@@ -727,7 +727,7 @@ def process_case(
 
 
 # ============================================================
-# CREATE ZIP
+# CREATE VERIFIED ZIP
 # ============================================================
 
 def create_zip(
@@ -737,6 +737,44 @@ def create_zip(
     output_folder = Path(
         output_folder
     )
+
+    # --------------------------------------------------------
+    # Only include actual PDF files
+    # --------------------------------------------------------
+
+    pdf_files = []
+
+    for file in output_folder.iterdir():
+
+        if not file.is_file():
+            continue
+
+        if file.suffix.lower() != ".pdf":
+            continue
+
+        if file.stat().st_size <= 0:
+            continue
+
+        pdf_files.append(
+            file
+        )
+
+    # --------------------------------------------------------
+    # No PDFs
+    # --------------------------------------------------------
+
+    if not pdf_files:
+
+        raise Exception(
+            "NO PDF FILES WERE FOUND AFTER THE "
+            "AUTOMATION FINISHED.\n\n"
+            "The ZIP was NOT created because there "
+            "are no valid PDF files to put inside it."
+        )
+
+    # --------------------------------------------------------
+    # Create ZIP
+    # --------------------------------------------------------
 
     zip_path = (
         output_folder.parent
@@ -749,16 +787,49 @@ def create_zip(
         zipfile.ZIP_DEFLATED
     ) as zip_file:
 
-        for file in output_folder.iterdir():
+        for pdf_file in pdf_files:
 
-            if file.is_file():
+            zip_file.write(
+                pdf_file,
+                arcname=pdf_file.name
+            )
 
-                zip_file.write(
-                    file,
-                    arcname=file.name
-                )
+    # --------------------------------------------------------
+    # VERIFY ZIP
+    # --------------------------------------------------------
 
-    return zip_path
+    if not zip_path.exists():
+
+        raise Exception(
+            "ZIP file was not created."
+        )
+
+    zip_size = zip_path.stat().st_size
+
+    if zip_size <= 22:
+
+        raise Exception(
+            "The ZIP file appears to be empty."
+        )
+
+    # --------------------------------------------------------
+    # Verify ZIP contents
+    # --------------------------------------------------------
+
+    with zipfile.ZipFile(
+        zip_path,
+        "r"
+    ) as zip_file:
+
+        zip_contents = zip_file.namelist()
+
+    if not zip_contents:
+
+        raise Exception(
+            "ZIP was created but contains no files."
+        )
+
+    return zip_path, pdf_files, zip_contents
 
 
 # ============================================================
@@ -800,7 +871,7 @@ if st.button(
         st.stop()
 
     # ========================================================
-    # TEMPORARY FOLDER
+    # TEMP FOLDER
     # ========================================================
 
     temp_dir = Path(
@@ -855,10 +926,6 @@ if st.button(
             f"Found {len(cases)} case(s)."
         )
 
-        # ----------------------------------------------------
-        # Show cases
-        # ----------------------------------------------------
-
         with st.expander(
             "📋 View Case Numbers"
         ):
@@ -882,7 +949,7 @@ if st.button(
         failed = []
 
         # ====================================================
-        # PLAYWRIGHT
+        # START PLAYWRIGHT
         # ====================================================
 
         status_text.info(
@@ -892,7 +959,7 @@ if st.button(
         with sync_playwright() as p:
 
             # ------------------------------------------------
-            # Find system Chromium
+            # Find Chromium
             # ------------------------------------------------
 
             chromium_path = shutil.which(
@@ -909,9 +976,7 @@ if st.button(
 
                 raise RuntimeError(
                     "Chromium was not found on the "
-                    "Streamlit server.\n\n"
-                    "Make sure packages.txt contains:\n"
-                    "chromium"
+                    "Streamlit server."
                 )
 
             status_text.info(
@@ -919,7 +984,7 @@ if st.button(
             )
 
             # ------------------------------------------------
-            # Launch browser
+            # Browser
             # ------------------------------------------------
 
             browser = p.chromium.launch(
@@ -934,10 +999,6 @@ if st.button(
                     "--disable-setuid-sandbox"
                 ]
             )
-
-            # ------------------------------------------------
-            # Browser context
-            # ------------------------------------------------
 
             context = browser.new_context(
                 accept_downloads=True,
@@ -979,9 +1040,7 @@ if st.button(
                 cases
             ):
 
-                position = (
-                    index + 1
-                )
+                position = index + 1
 
                 status_text.info(
                     f"Processing "
@@ -997,8 +1056,14 @@ if st.button(
 
                 if success:
 
+                    filename, file_size = result
+
                     successful.append(
-                        case_number
+                        (
+                            case_number,
+                            filename,
+                            file_size
+                        )
                     )
 
                 else:
@@ -1023,14 +1088,106 @@ if st.button(
             browser.close()
 
         # ====================================================
-        # CREATE ZIP
+        # IMPORTANT:
+        # VERIFY FILES BEFORE ZIP
+        # ====================================================
+
+        actual_pdfs = [
+
+            file for file in output_folder.iterdir()
+
+            if (
+                file.is_file()
+                and file.suffix.lower() == ".pdf"
+                and file.stat().st_size > 0
+            )
+        ]
+
+        # ====================================================
+        # SHOW ACTUAL FILE COUNT
+        # ====================================================
+
+        st.divider()
+
+        st.subheader(
+            "📊 Download Verification"
+        )
+
+        st.write(
+            f"Cases processed: **{len(cases)}**"
+        )
+
+        st.write(
+            f"Valid PDFs actually created: "
+            f"**{len(actual_pdfs)}**"
+        )
+
+        st.write(
+            f"Failed cases: **{len(failed)}**"
+        )
+
+        # ====================================================
+        # SHOW ACTUAL FILES
+        # ====================================================
+
+        if actual_pdfs:
+
+            with st.expander(
+                "📁 View Actual PDF Files"
+            ):
+
+                for pdf in actual_pdfs:
+
+                    size = pdf.stat().st_size
+
+                    st.write(
+                        f"✅ {pdf.name} "
+                        f"— {size:,} bytes"
+                    )
+
+        # ====================================================
+        # NO FILES = STOP
+        # ====================================================
+
+        if not actual_pdfs:
+
+            st.error(
+                "❌ ZERO PDF FILES WERE ACTUALLY CREATED."
+            )
+
+            st.warning(
+                "The automation processed the cases, "
+                "but no valid PDF files were found. "
+                "I have NOT created an empty ZIP."
+            )
+
+            if failed:
+
+                with st.expander(
+                    "❌ View Failed Cases"
+                ):
+
+                    for case_number, error in failed:
+
+                        st.write(
+                            f"**{case_number}**"
+                        )
+
+                        st.code(
+                            error
+                        )
+
+            st.stop()
+
+        # ====================================================
+        # CREATE VERIFIED ZIP
         # ====================================================
 
         status_text.info(
-            "Creating ZIP file..."
+            "Creating and verifying ZIP..."
         )
 
-        zip_path = create_zip(
+        zip_path, pdf_files, zip_contents = create_zip(
             output_folder
         )
 
@@ -1046,39 +1203,40 @@ if st.button(
             zip_bytes = file.read()
 
         # ====================================================
-        # RESULTS
+        # FINAL VERIFICATION
         # ====================================================
 
-        st.divider()
+        if len(zip_bytes) == 0:
 
-        st.subheader(
-            "✅ Download Complete"
-        )
-
-        col1, col2 = st.columns(
-            2
-        )
-
-        with col1:
-
-            st.metric(
-                "Successful",
-                len(successful)
+            raise Exception(
+                "The ZIP file contains zero bytes."
             )
 
-        with col2:
+        if not zip_contents:
 
-            st.metric(
-                "Failed",
-                len(failed)
+            raise Exception(
+                "The ZIP file contains no files."
             )
 
         # ====================================================
-        # DOWNLOAD BUTTON
+        # SUCCESS
+        # ====================================================
+
+        status_text.success(
+            "✅ Reports downloaded and ZIP verified."
+        )
+
+        st.success(
+            f"✅ {len(pdf_files)} PDF file(s) "
+            f"successfully added to the ZIP."
+        )
+
+        # ====================================================
+        # DOWNLOAD ZIP
         # ====================================================
 
         st.download_button(
-            label="⬇️ Download All Reports",
+            label="⬇️ DOWNLOAD ALL REPORTS (ZIP)",
             data=zip_bytes,
             file_name=(
                 "Lab_Reports_"
@@ -1090,6 +1248,20 @@ if st.button(
             mime="application/zip",
             use_container_width=True
         )
+
+        # ====================================================
+        # ZIP CONTENTS
+        # ====================================================
+
+        with st.expander(
+            "📦 View ZIP Contents"
+        ):
+
+            for filename in zip_contents:
+
+                st.write(
+                    f"✅ {filename}"
+                )
 
         # ====================================================
         # FAILED CASES
@@ -1115,26 +1287,6 @@ if st.button(
                         error
                     )
 
-        # ====================================================
-        # SUCCESSFUL CASES
-        # ====================================================
-
-        if successful:
-
-            with st.expander(
-                "✅ View Successful Cases"
-            ):
-
-                for case_number in successful:
-
-                    st.write(
-                        f"✓ {case_number}"
-                    )
-
-        status_text.success(
-            "All processing is complete."
-        )
-
     # ========================================================
     # ERROR
     # ========================================================
@@ -1142,18 +1294,17 @@ if st.button(
     except Exception as e:
 
         st.error(
-            "Automation error"
+            "❌ Automation error"
         )
 
         st.code(
             str(e)
         )
 
-    # ========================================================
-    # CLEANUP
-    # ========================================================
-
     finally:
+
+        # Cleanup only happens after the ZIP bytes
+        # have already been loaded into memory.
 
         try:
 
