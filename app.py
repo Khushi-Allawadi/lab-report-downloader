@@ -6,9 +6,7 @@ from datetime import datetime
 import tempfile
 import zipfile
 import shutil
-import os
 import re
-import time
 
 
 # ============================================================
@@ -32,7 +30,7 @@ SEARCH_SEL = "input[placeholder*='Search by patient']"
 
 
 # ============================================================
-# PAGE TITLE
+# HEADER
 # ============================================================
 
 st.title("📄 Lab Report Downloader")
@@ -50,18 +48,16 @@ st.divider()
 # ============================================================
 
 with st.sidebar:
+
     st.header("Settings")
 
     st.info(
-        "The application uses Chromium on the server so it can "
-        "run from Streamlit Cloud."
+        "The application uses Chromium on the server."
     )
-
-    browser_type = "Chromium"
 
 
 # ============================================================
-# LOGIN DETAILS
+# LOGIN
 # ============================================================
 
 st.subheader("LabConnect Login")
@@ -89,91 +85,281 @@ uploaded_file = st.file_uploader(
 
 
 # ============================================================
-# LOAD CASE NUMBERS
+# LOAD CASES FROM EXCEL
 # ============================================================
 
 def load_cases(file_path):
+
     """
-    Read case numbers from the uploaded Excel file.
-    Attempts to identify the Case Number column automatically.
+    Reads the Case No. column from the Excel file.
+
+    Supports:
+    Case No.
+    Case No
+    Case Number
+    CaseNumber
+    Case_Number
     """
 
     try:
-        df = pd.read_excel(file_path)
+
+        # ----------------------------------------------------
+        # Read Excel
+        # ----------------------------------------------------
+
+        df = pd.read_excel(
+            file_path
+        )
 
     except Exception as e:
-        raise Exception(f"Could not read Excel file: {e}")
+
+        raise Exception(
+            f"Could not read Excel file: {e}"
+        )
+
+    # --------------------------------------------------------
+    # Check empty file
+    # --------------------------------------------------------
 
     if df.empty:
-        raise Exception("The Excel file is empty.")
 
-    # Possible column names
-    possible_columns = [
-        "Case Number",
-        "Case No",
-        "Case",
-        "CaseNumber",
-        "Case_Number",
-        "Case number",
-        "CASE NUMBER",
-        "CASE NO",
-        "CASE"
+        raise Exception(
+            "The Excel file is empty."
+        )
+
+    # --------------------------------------------------------
+    # Keep original column names for debugging
+    # --------------------------------------------------------
+
+    original_columns = list(df.columns)
+
+    # --------------------------------------------------------
+    # Normalize column names
+    #
+    # Example:
+    # "Case No." -> "case no"
+    # " Case No. " -> "case no"
+    # "CASE NO." -> "case no"
+    # --------------------------------------------------------
+
+    normalized_columns = {}
+
+    for column in df.columns:
+
+        normalized = str(column).strip().lower()
+
+        normalized = normalized.replace(".", "")
+
+        normalized = normalized.replace("_", " ")
+
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            normalized
+        ).strip()
+
+        normalized_columns[column] = normalized
+
+    # --------------------------------------------------------
+    # Possible Case No. column names
+    # --------------------------------------------------------
+
+    possible_names = [
+        "case no",
+        "case number",
+        "caseno",
+        "case",
+        "case id",
+        "caseid"
     ]
 
     case_column = None
 
-    for col in possible_columns:
-        if col in df.columns:
-            case_column = col
+    # --------------------------------------------------------
+    # Look for exact normalized match
+    # --------------------------------------------------------
+
+    for original_column, normalized_column in normalized_columns.items():
+
+        if normalized_column in possible_names:
+
+            case_column = original_column
+
             break
 
-    # If exact match wasn't found, look for columns
-    # containing the word "case"
+    # --------------------------------------------------------
+    # Fallback:
+    # Find any column containing "case"
+    # --------------------------------------------------------
+
     if case_column is None:
 
-        for col in df.columns:
-            if "case" in str(col).lower():
-                case_column = col
+        for original_column, normalized_column in normalized_columns.items():
+
+            if "case" in normalized_column:
+
+                case_column = original_column
+
                 break
 
+    # --------------------------------------------------------
+    # If still not found
+    # --------------------------------------------------------
+
     if case_column is None:
+
         raise Exception(
-            "Could not find a Case Number column in the Excel file. "
-            f"Available columns: {list(df.columns)}"
+            "Could not find the Case No. column.\n\n"
+            f"Available columns: {original_columns}"
         )
 
-    cases = (
-        df[case_column]
-        .dropna()
-        .astype(str)
-        .str.strip()
-    )
+    # --------------------------------------------------------
+    # Extract Case Numbers
+    # --------------------------------------------------------
 
-    # Remove Excel-style .0 from numeric case numbers
+    cases = df[case_column]
+
+    # Remove blank rows
+    cases = cases.dropna()
+
+    # Convert to string
+    cases = cases.astype(str)
+
+    # Remove spaces around values
+    cases = cases.str.strip()
+
+    # --------------------------------------------------------
+    # Remove Excel numeric .0
+    #
+    # Example:
+    # 123456.0 -> 123456
+    # --------------------------------------------------------
+
     cases = cases.str.replace(
         r"\.0$",
         "",
         regex=True
     )
 
+    # --------------------------------------------------------
     # Remove blank values
-    cases = cases[cases != ""]
+    # --------------------------------------------------------
+
+    cases = cases[
+        cases != ""
+    ]
+
+    # --------------------------------------------------------
+    # Convert to list
+    # --------------------------------------------------------
 
     cases = cases.tolist()
 
+    # --------------------------------------------------------
+    # Validate
+    # --------------------------------------------------------
+
     if not cases:
+
         raise Exception(
-            "No case numbers were found in the Excel file."
+            "The Case No. column was found, "
+            "but it contains no case numbers."
         )
 
     return cases
 
 
 # ============================================================
+# FIND USERNAME FIELD
+# ============================================================
+
+def find_username_field(page):
+
+    selectors = [
+
+        "input[type='email']",
+
+        "input[name='username']",
+
+        "input[name='email']",
+
+        "input[placeholder*='Username']",
+
+        "input[placeholder*='username']",
+
+        "input[placeholder*='Email']",
+
+        "input[placeholder*='email']"
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            )
+
+            if locator.count() > 0:
+
+                return locator.first
+
+        except Exception:
+
+            continue
+
+    return None
+
+
+# ============================================================
+# FIND PASSWORD FIELD
+# ============================================================
+
+def find_password_field(page):
+
+    selectors = [
+
+        "input[type='password']",
+
+        "input[name='password']",
+
+        "input[placeholder*='Password']",
+
+        "input[placeholder*='password']"
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            )
+
+            if locator.count() > 0:
+
+                return locator.first
+
+        except Exception:
+
+            continue
+
+    return None
+
+
+# ============================================================
 # LOGIN
 # ============================================================
 
-def do_login(page, username, password):
+def do_login(
+    page,
+    username,
+    password
+):
+
+    # --------------------------------------------------------
+    # Open LabConnect
+    # --------------------------------------------------------
 
     page.goto(
         LABCONNECT_URL,
@@ -181,79 +367,67 @@ def do_login(page, username, password):
         timeout=120000
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(
+        5000
+    )
 
+    # --------------------------------------------------------
     # Username
-    username_selectors = [
-        "input[type='email']",
-        "input[name='username']",
-        "input[name='email']",
-        "input[placeholder*='Username']",
-        "input[placeholder*='username']",
-        "input[placeholder*='Email']",
-        "input[placeholder*='email']"
-    ]
+    # --------------------------------------------------------
 
-    username_box = None
-
-    for selector in username_selectors:
-
-        try:
-            locator = page.locator(selector)
-
-            if locator.count() > 0:
-                username_box = locator.first
-                break
-
-        except Exception:
-            pass
+    username_box = find_username_field(
+        page
+    )
 
     if username_box is None:
+
         raise Exception(
             "Could not find the LabConnect username field."
         )
 
-    username_box.fill(username)
+    username_box.fill(
+        username
+    )
 
+    # --------------------------------------------------------
     # Password
-    password_selectors = [
-        "input[type='password']",
-        "input[name='password']",
-        "input[placeholder*='Password']",
-        "input[placeholder*='password']"
-    ]
+    # --------------------------------------------------------
 
-    password_box = None
-
-    for selector in password_selectors:
-
-        try:
-            locator = page.locator(selector)
-
-            if locator.count() > 0:
-                password_box = locator.first
-                break
-
-        except Exception:
-            pass
+    password_box = find_password_field(
+        page
+    )
 
     if password_box is None:
+
         raise Exception(
             "Could not find the LabConnect password field."
         )
 
-    password_box.fill(password)
+    password_box.fill(
+        password
+    )
 
+    # --------------------------------------------------------
     # Login button
+    # --------------------------------------------------------
+
     login_selectors = [
+
         "button[type='submit']",
+
         "input[type='submit']",
+
         "button:has-text('Login')",
+
         "button:has-text('Log in')",
+
         "button:has-text('Sign in')",
-        "text=Login",
-        "text=Log in",
-        "text=Sign in"
+
+        "input[value='Login']",
+
+        "input[value='Log in']",
+
+        "input[value='Sign in']"
     ]
 
     login_button = None
@@ -261,176 +435,269 @@ def do_login(page, username, password):
     for selector in login_selectors:
 
         try:
-            locator = page.locator(selector)
+
+            locator = page.locator(
+                selector
+            )
 
             if locator.count() > 0:
+
                 login_button = locator.first
+
                 break
 
         except Exception:
-            pass
+
+            continue
 
     if login_button is None:
+
         raise Exception(
             "Could not find the LabConnect login button."
         )
 
+    # --------------------------------------------------------
+    # Click login
+    # --------------------------------------------------------
+
     login_button.click()
 
-    page.wait_for_timeout(5000)
+    # Give LabConnect time to load
+    page.wait_for_timeout(
+        7000
+    )
 
 
 # ============================================================
-# OPEN HOME PAGE
+# SEARCH FOR CASE
 # ============================================================
 
-def open_home(page):
+def search_case(
+    page,
+    case_number
+):
 
-    try:
-        page.wait_for_load_state(
-            "domcontentloaded",
-            timeout=60000
-        )
-    except Exception:
-        pass
+    # --------------------------------------------------------
+    # Find search box
+    # --------------------------------------------------------
 
-    page.wait_for_timeout(3000)
+    search_box = page.locator(
+        SEARCH_SEL
+    )
+
+    search_box.wait_for(
+        state="visible",
+        timeout=30000
+    )
+
+    # --------------------------------------------------------
+    # Clear previous search
+    # --------------------------------------------------------
+
+    search_box.fill("")
+
+    # --------------------------------------------------------
+    # Enter case number
+    # --------------------------------------------------------
+
+    search_box.fill(
+        str(case_number)
+    )
+
+    page.wait_for_timeout(
+        1500
+    )
+
+    # --------------------------------------------------------
+    # Search
+    # --------------------------------------------------------
+
+    search_box.press(
+        "Enter"
+    )
+
+    page.wait_for_timeout(
+        4000
+    )
 
 
 # ============================================================
-# PROCESS ONE CASE
+# OPEN CASE
 # ============================================================
 
-def process_case(page, case_number, output_folder):
+def open_case(
+    page,
+    case_number
+):
 
-    try:
+    selectors = [
 
-        # ----------------------------------------------------
-        # Search box
-        # ----------------------------------------------------
+        f"text={case_number}",
 
-        search_box = page.locator(SEARCH_SEL)
+        f"td:has-text('{case_number}')",
 
-        search_box.wait_for(
-            state="visible",
-            timeout=30000
-        )
+        f"a:has-text('{case_number}')",
 
-        search_box.fill(str(case_number))
+        f"div:has-text('{case_number}')"
+    ]
 
-        page.wait_for_timeout(2000)
+    for selector in selectors:
 
-        # ----------------------------------------------------
-        # Search
-        # ----------------------------------------------------
+        try:
 
-        # Try pressing Enter first
-        search_box.press("Enter")
-
-        page.wait_for_timeout(3000)
-
-        # ----------------------------------------------------
-        # Look for case/result
-        # ----------------------------------------------------
-
-        possible_case_selectors = [
-            f"text={case_number}",
-            f"td:has-text('{case_number}')",
-            f"div:has-text('{case_number}')",
-            f"a:has-text('{case_number}')"
-        ]
-
-        case_found = False
-
-        for selector in possible_case_selectors:
-
-            try:
-
-                locator = page.locator(selector)
-
-                if locator.count() > 0:
-
-                    locator.first.click()
-
-                    case_found = True
-
-                    break
-
-            except Exception:
-                pass
-
-        if not case_found:
-
-            # Sometimes search automatically opens
-            # the case, so don't immediately fail.
-            page.wait_for_timeout(2000)
-
-        # ----------------------------------------------------
-        # Patient & Invoice Report
-        # ----------------------------------------------------
-
-        report_selectors = [
-            "text=Patient & Invoice Report",
-            "text=Patient and Invoice Report",
-            "text=Patient & Invoice",
-            "button:has-text('Patient & Invoice Report')",
-            "a:has-text('Patient & Invoice Report')"
-        ]
-
-        report_button = None
-
-        for selector in report_selectors:
-
-            try:
-
-                locator = page.locator(selector)
-
-                if locator.count() > 0:
-
-                    report_button = locator.first
-
-                    break
-
-            except Exception:
-                pass
-
-        if report_button is None:
-
-            raise Exception(
-                "Patient & Invoice Report button was not found."
+            locator = page.locator(
+                selector
             )
 
-        # ----------------------------------------------------
-        # Download PDF
-        # ----------------------------------------------------
+            count = locator.count()
 
-        with page.expect_download(
-            timeout=60000
-        ) as download_info:
+            if count > 0:
 
-            report_button.click()
+                locator.first.click()
 
-        download = download_info.value
+                page.wait_for_timeout(
+                    3000
+                )
 
-        # ----------------------------------------------------
-        # Save PDF
-        # ----------------------------------------------------
+                return True
 
-        safe_case_number = re.sub(
-            r"[^A-Za-z0-9_\-]",
-            "_",
-            str(case_number)
+        except Exception:
+
+            continue
+
+    return False
+
+
+# ============================================================
+# DOWNLOAD PATIENT & INVOICE REPORT
+# ============================================================
+
+def download_report(
+    page,
+    case_number,
+    output_folder
+):
+
+    report_selectors = [
+
+        "text=Patient & Invoice Report",
+
+        "text=Patient and Invoice Report",
+
+        "text=Patient & Invoice",
+
+        "button:has-text('Patient & Invoice Report')",
+
+        "a:has-text('Patient & Invoice Report')"
+    ]
+
+    report_button = None
+
+    # --------------------------------------------------------
+    # Find report button
+    # --------------------------------------------------------
+
+    for selector in report_selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            )
+
+            if locator.count() > 0:
+
+                report_button = locator.first
+
+                break
+
+        except Exception:
+
+            continue
+
+    if report_button is None:
+
+        raise Exception(
+            "Patient & Invoice Report button was not found."
         )
 
-        filename = (
-            f"{safe_case_number}_Patient_Invoice_Report.pdf"
+    # --------------------------------------------------------
+    # Download
+    # --------------------------------------------------------
+
+    with page.expect_download(
+        timeout=60000
+    ) as download_info:
+
+        report_button.click()
+
+    download = download_info.value
+
+    # --------------------------------------------------------
+    # Safe filename
+    # --------------------------------------------------------
+
+    safe_case_number = re.sub(
+        r"[^A-Za-z0-9_-]",
+        "_",
+        str(case_number)
+    )
+
+    filename = (
+        f"{safe_case_number}"
+        f"_Patient_Invoice_Report.pdf"
+    )
+
+    save_path = (
+        Path(output_folder)
+        / filename
+    )
+
+    # --------------------------------------------------------
+    # Save PDF
+    # --------------------------------------------------------
+
+    download.save_as(
+        str(save_path)
+    )
+
+    return save_path
+
+
+# ============================================================
+# PROCESS CASE
+# ============================================================
+
+def process_case(
+    page,
+    case_number,
+    output_folder
+):
+
+    try:
+
+        # Search
+        search_case(
+            page,
+            case_number
         )
 
-        save_path = Path(output_folder) / filename
+        # Open case
+        open_case(
+            page,
+            case_number
+        )
 
-        download.save_as(str(save_path))
+        # Download report
+        report_path = download_report(
+            page,
+            case_number,
+            output_folder
+        )
 
-        return True, f"Downloaded {filename}"
+        return True, str(
+            report_path.name
+        )
 
     except Exception as e:
 
@@ -441,11 +708,18 @@ def process_case(page, case_number, output_folder):
 # CREATE ZIP
 # ============================================================
 
-def create_zip(folder):
+def create_zip(
+    output_folder
+):
 
-    folder = Path(folder)
+    output_folder = Path(
+        output_folder
+    )
 
-    zip_path = folder.parent / "Lab_Reports.zip"
+    zip_path = (
+        output_folder.parent
+        / "Lab_Reports.zip"
+    )
 
     with zipfile.ZipFile(
         zip_path,
@@ -453,7 +727,7 @@ def create_zip(folder):
         zipfile.ZIP_DEFLATED
     ) as zip_file:
 
-        for file in folder.iterdir():
+        for file in output_folder.iterdir():
 
             if file.is_file():
 
@@ -466,7 +740,7 @@ def create_zip(folder):
 
 
 # ============================================================
-# MAIN BUTTON
+# START DOWNLOAD BUTTON
 # ============================================================
 
 if st.button(
@@ -475,9 +749,9 @@ if st.button(
     use_container_width=True
 ):
 
-    # --------------------------------------------------------
-    # Validate username
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE INPUT
+    # ========================================================
 
     if not username:
 
@@ -487,10 +761,6 @@ if st.button(
 
         st.stop()
 
-    # --------------------------------------------------------
-    # Validate password
-    # --------------------------------------------------------
-
     if not password:
 
         st.error(
@@ -498,10 +768,6 @@ if st.button(
         )
 
         st.stop()
-
-    # --------------------------------------------------------
-    # Validate Excel
-    # --------------------------------------------------------
 
     if uploaded_file is None:
 
@@ -511,9 +777,9 @@ if st.button(
 
         st.stop()
 
-    # --------------------------------------------------------
-    # Create temporary directory
-    # --------------------------------------------------------
+    # ========================================================
+    # TEMPORARY FOLDER
+    # ========================================================
 
     temp_dir = Path(
         tempfile.mkdtemp(
@@ -521,9 +787,15 @@ if st.button(
         )
     )
 
-    excel_path = temp_dir / uploaded_file.name
+    excel_path = (
+        temp_dir
+        / uploaded_file.name
+    )
 
-    output_folder = temp_dir / "Reports"
+    output_folder = (
+        temp_dir
+        / "Reports"
+    )
 
     output_folder.mkdir(
         parents=True,
@@ -532,25 +804,25 @@ if st.button(
 
     try:
 
-        # ----------------------------------------------------
-        # Save uploaded Excel
-        # ----------------------------------------------------
+        # ====================================================
+        # SAVE EXCEL
+        # ====================================================
 
         with open(
             excel_path,
             "wb"
-        ) as f:
+        ) as file:
 
-            f.write(
+            file.write(
                 uploaded_file.getbuffer()
             )
 
-        # ----------------------------------------------------
-        # Read cases
-        # ----------------------------------------------------
+        # ====================================================
+        # READ CASES
+        # ====================================================
 
         st.info(
-            "Reading case numbers from Excel..."
+            "Reading Case No. from Excel..."
         )
 
         cases = load_cases(
@@ -561,34 +833,42 @@ if st.button(
             f"Found {len(cases)} case(s)."
         )
 
-        # ----------------------------------------------------
-        # Progress UI
-        # ----------------------------------------------------
+        # Show first few cases
+        with st.expander(
+            "View Case Numbers"
+        ):
 
-        progress_bar = st.progress(0)
+            st.write(
+                cases
+            )
+
+        # ====================================================
+        # PROGRESS
+        # ====================================================
+
+        progress_bar = st.progress(
+            0
+        )
 
         status_text = st.empty()
 
-        results_container = st.empty()
-
         successful = []
+
         failed = []
 
-        # ----------------------------------------------------
-        # Start Playwright
-        # ----------------------------------------------------
+        # ====================================================
+        # START PLAYWRIGHT
+        # ====================================================
 
         status_text.info(
-            "Starting Chromium browser..."
+            "Starting Chromium..."
         )
 
         with sync_playwright() as p:
 
-            # =================================================
-            # IMPORTANT:
-            # Streamlit Cloud uses the Linux Chromium package
-            # installed through packages.txt.
-            # =================================================
+            # ------------------------------------------------
+            # Find system Chromium
+            # ------------------------------------------------
 
             chromium_path = shutil.which(
                 "chromium"
@@ -596,7 +876,6 @@ if st.button(
 
             if not chromium_path:
 
-                # Try chromium-browser as fallback
                 chromium_path = shutil.which(
                     "chromium-browser"
                 )
@@ -604,14 +883,19 @@ if st.button(
             if not chromium_path:
 
                 raise RuntimeError(
-                    "Chromium was not found on the Streamlit "
-                    "server. Make sure packages.txt contains "
-                    "the line: chromium"
+                    "Chromium was not found on the "
+                    "Streamlit server.\n\n"
+                    "Make sure packages.txt contains:\n"
+                    "chromium"
                 )
 
             status_text.info(
-                f"Using Chromium: {chromium_path}"
+                "Chromium found. Opening LabConnect..."
             )
+
+            # ------------------------------------------------
+            # Launch browser
+            # ------------------------------------------------
 
             browser = p.chromium.launch(
                 headless=True,
@@ -640,12 +924,12 @@ if st.button(
 
             page = context.new_page()
 
-            # ------------------------------------------------
-            # Login
-            # ------------------------------------------------
+            # =================================================
+            # LOGIN
+            # =================================================
 
             status_text.info(
-                "Opening LabConnect and logging in..."
+                "Logging into LabConnect..."
             )
 
             do_login(
@@ -654,27 +938,33 @@ if st.button(
                 password
             )
 
-            open_home(page)
-
             status_text.success(
                 "Logged into LabConnect."
             )
 
-            # ------------------------------------------------
-            # Process cases
-            # ------------------------------------------------
+            # =================================================
+            # PROCESS CASES
+            # =================================================
 
-            for index, case_number in enumerate(cases):
+            total_cases = len(
+                cases
+            )
 
-                current_number = index + 1
+            for index, case_number in enumerate(
+                cases
+            ):
+
+                case_position = (
+                    index + 1
+                )
 
                 status_text.info(
-                    f"Processing case "
-                    f"{current_number}/{len(cases)}: "
+                    f"Processing "
+                    f"{case_position}/{total_cases}: "
                     f"{case_number}"
                 )
 
-                success, message = process_case(
+                success, result = process_case(
                     page,
                     case_number,
                     output_folder
@@ -691,25 +981,22 @@ if st.button(
                     failed.append(
                         (
                             case_number,
-                            message
+                            result
                         )
                     )
 
                 # Progress
-                progress = (
-                    current_number /
-                    len(cases)
-                )
-
                 progress_bar.progress(
-                    progress
+                    case_position
+                    / total_cases
                 )
 
-            # ------------------------------------------------
-            # Close browser
-            # ------------------------------------------------
+            # =================================================
+            # CLOSE BROWSER
+            # =================================================
 
             context.close()
+
             browser.close()
 
         # ====================================================
@@ -724,13 +1011,16 @@ if st.button(
             output_folder
         )
 
-        # Read ZIP into memory
+        # ====================================================
+        # READ ZIP
+        # ====================================================
+
         with open(
             zip_path,
             "rb"
-        ) as f:
+        ) as file:
 
-            zip_bytes = f.read()
+            zip_bytes = file.read()
 
         # ====================================================
         # RESULTS
@@ -739,10 +1029,12 @@ if st.button(
         st.divider()
 
         st.subheader(
-            "Download Complete"
+            "✅ Download Complete"
         )
 
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(
+            2
+        )
 
         with col1:
 
@@ -758,12 +1050,12 @@ if st.button(
                 len(failed)
             )
 
-        # ----------------------------------------------------
-        # Download button
-        # ----------------------------------------------------
+        # ====================================================
+        # DOWNLOAD ZIP
+        # ====================================================
 
         st.download_button(
-            label="⬇️ Download All Reports (ZIP)",
+            label="⬇️ Download All Reports",
             data=zip_bytes,
             file_name=(
                 "Lab_Reports_"
@@ -783,17 +1075,21 @@ if st.button(
         if failed:
 
             st.warning(
-                f"{len(failed)} case(s) could not be downloaded."
+                f"{len(failed)} case(s) failed."
             )
 
             with st.expander(
-                "View Failed Cases"
+                "❌ View Failed Cases"
             ):
 
                 for case_number, error in failed:
 
                     st.write(
-                        f"**{case_number}** — {error}"
+                        f"**{case_number}**"
+                    )
+
+                    st.code(
+                        error
                     )
 
         # ====================================================
@@ -803,30 +1099,38 @@ if st.button(
         if successful:
 
             with st.expander(
-                "View Successful Cases"
+                "✅ View Successful Cases"
             ):
 
                 for case_number in successful:
 
                     st.write(
-                        f"✅ {case_number}"
+                        f"✓ {case_number}"
                     )
+
+        status_text.success(
+            "All processing is complete."
+        )
+
+    # ========================================================
+    # ERROR HANDLING
+    # ========================================================
 
     except Exception as e:
 
         st.error(
-            "Automation error:"
+            "Automation error"
         )
 
         st.code(
             str(e)
         )
 
-    finally:
+    # ========================================================
+    # CLEANUP
+    # ========================================================
 
-        # ----------------------------------------------------
-        # Cleanup temporary files
-        # ----------------------------------------------------
+    finally:
 
         try:
 
@@ -836,4 +1140,5 @@ if st.button(
             )
 
         except Exception:
+
             pass
